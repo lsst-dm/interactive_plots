@@ -1,6 +1,39 @@
 {
   "categories": {
-    "Astrometry": {},
+    "Astrometry": {
+      "Median astrometric difference from Gaia DR3": {
+        "template": "astrom-AA1-{coord}-{band}",
+        "parameters": {
+          "band": ["u", "g", "r", "i", "z", "y"],
+          "coord": ["RA", "Dec"]
+        },
+        "description": "Median difference in Right Ascension or Declination between science objects and reference objects from Gaia DR3. The reference objects have been shifted to the median epoch of the science objects."
+      },
+      "Astrometric repeatability percentage": {
+        "template": "astrom-repeat-AF{separation}-{band}",
+        "parameters": {
+          "band": ["u", "g", "r", "i", "z", "y"],
+          "separation": ["5", "20"]
+        },
+        "description": "The percentage of objects for which the the standard deviation across all visits exceeds 20 milliarcseconds for all stellar pairs separated by the chosen separation (in arcminutes)."
+      },
+      "Median Astrometric Repeatability": {
+        "template": "astrom-repeat-AM{separation}-{band}",
+        "parameters": {
+          "band": ["u", "g", "r", "i", "z", "y"],
+          "separation": ["5", "20"]
+        },
+        "description": "The median value for the standard deviation across all visits of the distance between stellar pairs separated by approximately the chosen separation (in arcminutes)."
+      },
+      "Astrometric Self-Repeatability": {
+        "template": "astrom-selfrepeat-{coord}-{band}",
+        "parameters": {
+          "band": ["u", "g", "r", "i", "z", "y"],
+          "coord": ["RA", "Dec"]
+        },
+        "description": "Median repeatability in Right Ascension or Declination after single-frame processing, where repeatability is defined as the standard deviation of the measured positions of associated sources."
+      }
+    },
     "Detection and Deblending": {
       "Number of Peaks": {
         "template": "detected-peaks",
