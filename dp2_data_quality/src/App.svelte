@@ -2,6 +2,7 @@
   import { onMount, untrack } from 'svelte';
   import HeatmapTractSelector from './lib/HeatmapTractSelector.svelte';
   import SphereTractSelector from './lib/SphereTractSelector.svelte';
+  import HelpModal from './lib/HelpModal.svelte';
 
   interface PlotEntry {
     template: string;
@@ -16,6 +17,11 @@
   const BAND_ORDER = ['u', 'g', 'r', 'i', 'z', 'y'];
   const DEFAULT_BAND = 'r';
 
+  // Resolved against this module's own URL rather than the site root: the
+  // bundle and its data ship together into a directory whose prefix differs
+  // between dp2.lsst.io, a /v/<branch>/ preview, and the dev server.
+  const DATA_URL = new URL('./data/', import.meta.url);
+
   let info = $state<Info | null>(null);
   let selectedCategory = $state('');
   let selectedPlot = $state('');
@@ -23,6 +29,7 @@
   let paramSelections = $state<Record<string, string | number>>({});
   let heatmapValues = $state<Record<number, number>>({});
   let projectionMode = $state<'flat' | 'sphere'>('flat');
+  let showHelp = $state(false);
 
   let nonEmptyCategories = $derived(
     info
@@ -50,7 +57,7 @@
   });
 
   onMount(async () => {
-    const resp = await fetch('/data/info.json');
+    const resp = await fetch(new URL('info.json', DATA_URL));
     info = (await resp.json()) as Info;
   });
 
@@ -123,7 +130,7 @@
 
     const filename = entry.template.replace(/\{(\w+)\}/g, (_, k) => String(substitutions[k]));
     const seq = ++fetchSeq;
-    fetch(`/data/metrics/${filename}.json`).then(async (resp) => {
+    fetch(new URL(`metrics/${filename}.json`, DATA_URL)).then(async (resp) => {
       if (seq !== fetchSeq) return;
       if (!resp.ok) {
         heatmapValues = {};
@@ -151,12 +158,43 @@
   }
 </script>
 
-<header>
-  <h1>DP2 Data Quality</h1>
-</header>
-
 <main>
-  <aside class="sidebar">
+  <section class="map">
+    <div class="projection-toggle">
+      <button
+        type="button"
+        class="toggle-btn"
+        class:active={projectionMode === 'flat'}
+        onclick={() => (projectionMode = 'flat')}
+      >
+        Flat
+      </button>
+      <button
+        type="button"
+        class="toggle-btn"
+        class:active={projectionMode === 'sphere'}
+        onclick={() => (projectionMode = 'sphere')}
+      >
+        Sphere
+      </button>
+      <button
+        type="button"
+        class="help-btn"
+        onclick={() => (showHelp = true)}
+        aria-label="How to use these plots"
+        title="How to use these plots"
+      >
+        ?
+      </button>
+    </div>
+    {#if projectionMode === 'flat'}
+      <HeatmapTractSelector values={heatmapValues} />
+    {:else}
+      <SphereTractSelector values={heatmapValues} />
+    {/if}
+  </section>
+
+  <aside class="controls">
     {#if info === null}
       <div class="loading">Loading…</div>
     {:else}
@@ -218,64 +256,36 @@
       {/if}
     {/if}
   </aside>
-
-  <section class="map">
-    <div class="projection-toggle">
-      <button
-        type="button"
-        class="toggle-btn"
-        class:active={projectionMode === 'flat'}
-        onclick={() => (projectionMode = 'flat')}
-      >
-        Flat
-      </button>
-      <button
-        type="button"
-        class="toggle-btn"
-        class:active={projectionMode === 'sphere'}
-        onclick={() => (projectionMode = 'sphere')}
-      >
-        Sphere
-      </button>
-    </div>
-    {#if projectionMode === 'flat'}
-      <HeatmapTractSelector values={heatmapValues} />
-    {:else}
-      <SphereTractSelector values={heatmapValues} />
-    {/if}
-  </section>
 </main>
 
+{#if showHelp}
+  <HelpModal {projectionMode} onClose={() => (showHelp = false)} />
+{/if}
+
 <style>
-  header {
-    padding: 0.75rem 1.5rem;
-    border-bottom: 1px solid #333;
-  }
-
-  h1 {
-    font-size: 1.4rem;
-    margin: 0;
-    color: #dde;
-  }
-
+  /* Fills the mount point, which is sized by app.css. The map is stacked above
+     the controls rather than beside them: the page's own navigation already
+     occupies the left of the viewport, so a second vertical rail would leave
+     the map with a narrow strip of what is already a narrow content column. */
   main {
     display: flex;
-    height: calc(100vh - 3.5rem);
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
   }
 
-  .sidebar {
-    width: 240px;
-    min-width: 200px;
-    padding: 1rem;
-    border-right: 1px solid #333;
-    overflow-y: auto;
+  .controls {
     display: flex;
-    flex-direction: column;
-    gap: 1rem;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 0.75rem 1.25rem;
+    padding: 0.75rem 0.25rem 0;
+    border-top: 1px solid var(--dq-border);
+    flex: none;
   }
 
   .loading {
-    color: #889;
+    color: var(--dq-text-muted);
     font-size: 0.85rem;
   }
 
@@ -284,16 +294,17 @@
     flex-direction: column;
     gap: 0.25rem;
     font-size: 0.85rem;
-    color: #aab;
+    color: var(--dq-text-muted);
     margin: 0;
     padding: 0;
     border: none;
+    min-width: 9rem;
   }
 
   select {
-    background: #1a1a2e;
-    color: #ccc;
-    border: 1px solid #4a9eff;
+    background: var(--dq-surface);
+    color: var(--dq-text);
+    border: 1px solid var(--dq-accent);
     border-radius: 4px;
     padding: 0.4em 0.6em;
     font-family: inherit;
@@ -302,13 +313,13 @@
   }
 
   select:focus {
-    outline: 2px solid #4a9eff;
+    outline: 2px solid var(--dq-accent);
     outline-offset: 1px;
   }
 
   .band-field legend {
     font-size: 0.85rem;
-    color: #aab;
+    color: var(--dq-text-muted);
     padding: 0;
   }
 
@@ -319,9 +330,9 @@
   }
 
   .band-btn {
-    background: #1a1a2e;
-    color: #ccc;
-    border: 1px solid #333;
+    background: var(--dq-surface);
+    color: var(--dq-text);
+    border: 1px solid var(--dq-border);
     border-radius: 4px;
     padding: 0.25em 0.6em;
     font-family: inherit;
@@ -330,32 +341,35 @@
     min-width: 2em;
   }
   .band-btn:hover {
-    border-color: #4a9eff;
+    border-color: var(--dq-accent);
   }
   .band-btn.active {
-    background: #4a9eff;
-    color: #0b1220;
-    border-color: #4a9eff;
+    background: var(--dq-accent);
+    color: var(--dq-on-accent);
+    border-color: var(--dq-accent);
   }
 
+  /* Takes the remaining width of the control row so long descriptions wrap
+     alongside the selectors rather than pushing them apart. */
   .description {
-    padding-top: 0.5rem;
-    border-top: 1px solid #333;
+    flex: 1 1 18rem;
+    min-width: 14rem;
   }
   .description h3 {
     font-size: 0.9rem;
-    color: #dde;
-    margin: 0 0 0.5rem;
+    color: var(--dq-text);
+    margin: 0 0 0.25rem;
   }
   .description p {
     font-size: 0.8rem;
-    color: #aab;
+    color: var(--dq-text-muted);
     line-height: 1.5;
     margin: 0;
   }
 
   .map {
     flex: 1;
+    min-height: 0;
     min-width: 0;
     position: relative;
     display: flex;
@@ -364,13 +378,33 @@
 
   .projection-toggle {
     display: flex;
+    align-items: center;
     gap: 0.3rem;
-    padding: 0.5rem 0.75rem 0;
+    padding: 0 0 0.25rem;
+  }
+
+  /* Right-aligned, away from Flat/Sphere: it is not a third view. */
+  .help-btn {
+    margin-left: auto;
+    width: 1.6rem;
+    height: 1.6rem;
+    border-radius: 50%;
+    background: var(--dq-surface);
+    color: var(--dq-text-muted);
+    border: 1px solid var(--dq-border);
+    font-family: inherit;
+    font-size: 0.8rem;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .help-btn:hover {
+    border-color: var(--dq-accent);
+    color: var(--dq-accent);
   }
   .toggle-btn {
-    background: #1a1a2e;
-    color: #ccc;
-    border: 1px solid #333;
+    background: var(--dq-surface);
+    color: var(--dq-text);
+    border: 1px solid var(--dq-border);
     border-radius: 4px;
     padding: 0.25em 0.7em;
     font-family: inherit;
@@ -378,26 +412,21 @@
     cursor: pointer;
   }
   .toggle-btn:hover {
-    border-color: #4a9eff;
+    border-color: var(--dq-accent);
   }
   .toggle-btn.active {
-    background: #4a9eff;
-    color: #0b1220;
-    border-color: #4a9eff;
+    background: var(--dq-accent);
+    color: var(--dq-on-accent);
+    border-color: var(--dq-accent);
   }
 
   @media (max-width: 700px) {
-    main {
-      flex-direction: column;
-      height: auto;
+    .controls {
+      gap: 0.75rem;
     }
-    .sidebar {
-      width: auto;
-      border-right: none;
-      border-bottom: 1px solid #333;
-    }
-    .map {
-      min-height: 60vh;
+    .field,
+    .description {
+      min-width: 100%;
     }
   }
 </style>

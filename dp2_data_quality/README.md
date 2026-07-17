@@ -108,10 +108,10 @@ This creates `public/data/metrics/` if needed and mirrors the remote directory i
 
 The Makefile exposes two variables, both overridable on the command line:
 
-| Variable | Default | Meaning |
-|----------|---------|---------|
-| `REMOTE` | `slacd:/sdf/home/f/fred3m/u/data/dp2/metrics` | Rsync-style source (`[user@]host:path`). The default targets the SLAC USDF dev node via an SSH config entry named `slacd` — you'll need your own SSH config/host alias for it to resolve. |
-| `LOCAL`  | `public/data/metrics` | Local destination, relative to this directory. |
+| Variable | Default                                            | Meaning                                                                                                                                                                                  |
+| -------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `REMOTE` | `slacd:/sdf/home/f/fred3m/u/data/dp2/metrics/edp2` | Rsync-style source (`[user@]host:path`). The default targets the SLAC USDF dev node via an SSH config entry named `slacd`; you'll need your own SSH config/host alias for it to resolve. |
+| `LOCAL`  | `public/data/metrics`                              | Local destination, relative to this directory.                                                                                                                                           |
 
 Override either on the command line:
 

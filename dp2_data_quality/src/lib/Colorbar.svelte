@@ -32,7 +32,7 @@
   let axisContainer: SVGSVGElement;
   let showModal = $state(false);
 
-  const barHeight = 32;
+  const barHeight = 64;
   const axisHeight = 24;
 
   // Drag state
@@ -98,14 +98,10 @@
           scale = d3.scaleLinear().domain([min, max]).range([barLeft, barRight]);
       }
 
+      // Colours come from the stylesheet so the axis follows the host theme;
+      // see the .colorbar-axis rules below.
       const axis = d3.axisBottom(scale).ticks(6);
-      svgSel
-        .append('g')
-        .call(axis)
-        .selectAll('text')
-        .attr('fill', '#aab')
-        .attr('font-size', '10px');
-      svgSel.selectAll('.domain, .tick line').attr('stroke', '#667');
+      svgSel.append('g').attr('class', 'colorbar-axis').call(axis);
     };
 
     // Iteratively grow horizontal padding until tick labels fit.
@@ -179,6 +175,7 @@
 </script>
 
 <div class="colorbar">
+  <p class="colorbar-hint">Click to change the colormap. Drag to adjust bias and contrast.</p>
   <canvas
     bind:this={canvasEl}
     style="height: {barHeight}px; width: 100%; display: block; cursor: grab;"
@@ -212,10 +209,28 @@
   .colorbar {
     padding: 4px 1rem;
   }
+  /* Neither gesture on the colourbar is guessable, and the click especially so:
+     nothing about a gradient suggests it opens a dialog. */
+  .colorbar-hint {
+    text-align: center;
+    color: var(--dq-text-muted);
+    font-size: 0.75rem;
+    margin: 0 0 2px;
+  }
+
   .colorbar-label {
     text-align: center;
-    color: #aab;
+    color: var(--dq-text-muted);
     font-size: 0.8rem;
     margin-top: 2px;
+  }
+
+  .colorbar :global(.colorbar-axis text) {
+    fill: var(--dq-text-muted);
+    font-size: 10px;
+  }
+  .colorbar :global(.colorbar-axis .domain),
+  .colorbar :global(.colorbar-axis .tick line) {
+    stroke: var(--dq-border);
   }
 </style>

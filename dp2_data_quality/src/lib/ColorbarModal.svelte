@@ -87,8 +87,8 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="modal-backdrop" onclick={handleBackdropClick}>
-  <div class="modal">
+<div class="dq-modal-backdrop" onclick={handleBackdropClick}>
+  <div class="dq-modal">
     <h3>Colorbar Settings</h3>
 
     <div class="section">
@@ -139,29 +139,32 @@
     </div>
 
     <div class="actions">
-      <button class="btn btn-secondary" onclick={handleReset}>Reset</button>
+      <button class="dq-btn dq-btn-secondary" onclick={handleReset}>Reset</button>
       <div class="action-right">
-        <button class="btn btn-secondary" onclick={onClose}>Cancel</button>
-        <button class="btn btn-primary" onclick={handleApply}>Apply</button>
+        <button class="dq-btn dq-btn-secondary" onclick={onClose}>Cancel</button>
+        <button class="dq-btn dq-btn-primary" onclick={handleApply}>Apply</button>
       </div>
     </div>
   </div>
 </div>
 
 <style>
-  .modal-backdrop {
+  /* Above the host page's own layers: its header, sticky bars, and back-to-top
+     button run to z-index 1080, and a modal that loses to them is unreachable.
+     Standalone there is nothing to outrank and any value would do. */
+  .dq-modal-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.7);
+    background: var(--dq-backdrop);
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 1000;
+    z-index: 1100;
   }
 
-  .modal {
-    background: #1a1a2e;
-    border: 1px solid #4a9eff;
+  .dq-modal {
+    background: var(--dq-surface);
+    border: 1px solid var(--dq-accent);
     border-radius: 8px;
     padding: 1.25rem;
     width: 380px;
@@ -171,7 +174,7 @@
 
   h3 {
     margin: 0 0 1rem;
-    color: #dde;
+    color: var(--dq-text);
     font-size: 1.1rem;
   }
 
@@ -182,7 +185,7 @@
   .field-label {
     display: block;
     font-size: 0.8rem;
-    color: #aab;
+    color: var(--dq-text-muted);
     margin-bottom: 0.4rem;
   }
 
@@ -200,21 +203,21 @@
     align-items: center;
     gap: 6px;
     background: transparent;
-    border: 1px solid #333;
+    border: 1px solid var(--dq-border);
     border-radius: 4px;
     padding: 3px 6px;
     cursor: pointer;
-    color: #ccc;
+    color: var(--dq-text);
     font-size: 0.75rem;
   }
 
   .colormap-option:hover {
-    border-color: #4a9eff;
+    border-color: var(--dq-accent);
   }
 
   .colormap-option.selected {
-    border-color: #4a9eff;
-    background: rgba(74, 158, 255, 0.15);
+    border-color: var(--dq-accent);
+    background: color-mix(in srgb, var(--dq-accent) 15%, transparent);
   }
 
   .colormap-option canvas {
@@ -237,21 +240,21 @@
     flex: 1;
     padding: 0.35em 0.6em;
     background: transparent;
-    border: 1px solid #333;
+    border: 1px solid var(--dq-border);
     border-radius: 4px;
-    color: #ccc;
+    color: var(--dq-text);
     font-size: 0.85rem;
     cursor: pointer;
   }
 
   .scale-btn:hover {
-    border-color: #4a9eff;
+    border-color: var(--dq-accent);
   }
 
   .scale-btn.selected {
-    border-color: #4a9eff;
-    background: rgba(74, 158, 255, 0.15);
-    color: #4a9eff;
+    border-color: var(--dq-accent);
+    background: color-mix(in srgb, var(--dq-accent) 15%, transparent);
+    color: var(--dq-accent);
   }
 
   .range-inputs {
@@ -265,13 +268,13 @@
     flex-direction: column;
     gap: 0.2rem;
     font-size: 0.8rem;
-    color: #aab;
+    color: var(--dq-text-muted);
   }
 
   .range-input {
-    background: #0a0a1a;
-    color: #ccc;
-    border: 1px solid #333;
+    background: var(--dq-panel);
+    color: var(--dq-text);
+    border: 1px solid var(--dq-border);
     border-radius: 4px;
     padding: 0.35em 0.5em;
     font-size: 0.85rem;
@@ -280,7 +283,7 @@
   }
 
   .range-input:focus {
-    border-color: #4a9eff;
+    border-color: var(--dq-accent);
     outline: none;
   }
 
@@ -296,7 +299,7 @@
     gap: 0.5rem;
   }
 
-  .btn {
+  .dq-btn {
     padding: 0.4em 1em;
     border-radius: 4px;
     font-size: 0.85rem;
@@ -304,24 +307,24 @@
     border: 1px solid transparent;
   }
 
-  .btn-primary {
-    background: #4a9eff;
-    color: #fff;
-    border-color: #4a9eff;
+  .dq-btn-primary {
+    background: var(--dq-accent);
+    color: var(--dq-on-accent);
+    border-color: var(--dq-accent);
   }
 
-  .btn-primary:hover {
-    background: #3a8eef;
+  .dq-btn-primary:hover {
+    background: color-mix(in srgb, var(--dq-accent) 85%, black);
   }
 
-  .btn-secondary {
+  .dq-btn-secondary {
     background: transparent;
-    color: #aab;
-    border-color: #555;
+    color: var(--dq-text-muted);
+    border-color: var(--dq-border);
   }
 
-  .btn-secondary:hover {
-    border-color: #888;
-    color: #dde;
+  .dq-btn-secondary:hover {
+    border-color: var(--dq-text-muted);
+    color: var(--dq-text);
   }
 </style>
