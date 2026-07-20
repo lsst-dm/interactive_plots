@@ -3,6 +3,7 @@
   import HeatmapTractSelector from './lib/HeatmapTractSelector.svelte';
   import SphereTractSelector from './lib/SphereTractSelector.svelte';
   import HelpModal from './lib/HelpModal.svelte';
+  import { readPlotUrl, writePlotUrl } from './lib/plotUrl';
 
   interface PlotEntry {
     template: string;
@@ -23,14 +24,20 @@
   // between dp2.lsst.io, a /v/<branch>/ preview, and the dev server.
   const DATA_URL = new URL('./data/', import.meta.url);
 
+  // Seeded before the first fetch, so a linked view resolves on the initial
+  // render and the map is drawn once rather than redrawn onto the link's target.
+  const linked = readPlotUrl(window.location.search);
+  const { band: linkedBand = '', ...linkedParams } = linked.params;
+
   let info = $state<Info | null>(null);
-  let selectedCategory = $state('');
-  let selectedPlot = $state('');
-  let selectedBand = $state<string>('');
-  let paramSelections = $state<Record<string, string | number>>({});
+  let selectedCategory = $state(linked.category);
+  let selectedPlot = $state(linked.plot);
+  let selectedBand = $state<string>(linkedBand);
+  let paramSelections = $state<Record<string, string | number>>(linkedParams);
   let heatmapValues = $state<Record<number, number>>({});
   let projectionMode = $state<'flat' | 'sphere'>('flat');
   let showHelp = $state(false);
+  let copied = $state(false);
 
   let nonEmptyCategories = $derived(
     info
@@ -72,13 +79,18 @@
     if (cats.length === 0) return;
     if (!cats.includes(selectedCategory)) {
       untrack(() => {
-        selectedCategory = cats[0];
+        // A link may name only the plot, so fall back to whichever category holds it.
+        const owner = cats.find((c) => selectedPlot in info!.categories[c]);
+        selectedCategory = owner ?? cats[0];
       });
     }
   });
 
-  // When category changes, pick a plot default.
+  // When category changes, pick a plot default. Waits for info: until it loads
+  // there are no categories to draw plots from, and clearing the selection then
+  // would discard the plot a link asked for.
   $effect(() => {
+    if (!info) return;
     const plots = plotsInCategory;
     if (plots.length === 0) {
       untrack(() => {
@@ -110,8 +122,11 @@
 
       const next: Record<string, string | number> = {};
       for (const [key, values] of params) {
+        // Compared as strings: a value off the URL is text even where info.json
+        // declares the parameter numeric.
         const prev = paramSelections[key];
-        next[key] = values.includes(prev) ? prev : values[0];
+        const match = values.find((v) => String(v) === String(prev));
+        next[key] = match ?? values[0];
       }
       paramSelections = next;
     });
@@ -149,6 +164,44 @@
     });
   });
 
+  // Mirror the selection into the query string. replaceState rather than
+  // pushState: changing plot is not navigation, and a history entry per change
+  // would leave the reader pressing Back through every view to leave the page.
+  $effect(() => {
+    if (!info || !selectedPlot) return;
+    const params: Record<string, string> = {};
+    if (selectedBand) params.band = selectedBand;
+    for (const [key, value] of Object.entries(paramSelections)) params[key] = String(value);
+    const query = writePlotUrl(window.location.search, {
+      category: selectedCategory,
+      plot: selectedPlot,
+      params,
+    });
+    history.replaceState(null, '', `${window.location.pathname}?${query}${window.location.hash}`);
+  });
+
+  let copyTimer: ReturnType<typeof setTimeout> | undefined;
+  async function copyLink() {
+    const url = window.location.href;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      // The clipboard API needs a secure context, which a file:// or plain http
+      // preview of the built bundle is not.
+      const field = document.createElement('textarea');
+      field.value = url;
+      field.style.position = 'fixed';
+      field.style.opacity = '0';
+      document.body.appendChild(field);
+      field.select();
+      document.execCommand('copy');
+      field.remove();
+    }
+    copied = true;
+    clearTimeout(copyTimer);
+    copyTimer = setTimeout(() => (copied = false), 1500);
+  }
+
   function onCategoryChange(e: Event) {
     selectedCategory = (e.target as HTMLSelectElement).value;
   }
@@ -180,6 +233,15 @@
         onclick={() => (projectionMode = 'sphere')}
       >
         Sphere
+      </button>
+      <button
+        type="button"
+        class="copy-btn"
+        onclick={copyLink}
+        title="Copy a link to this plot"
+        aria-label="Copy a link to this plot"
+      >
+        {copied ? 'Copied' : 'Copy link'}
       </button>
       <button
         type="button"
@@ -394,9 +456,26 @@
     padding: 0 0 0.25rem;
   }
 
-  /* Right-aligned, away from Flat/Sphere: it is not a third view. */
-  .help-btn {
+  /* Right-aligned, away from Flat/Sphere: neither is a third view. */
+  .copy-btn {
     margin-left: auto;
+    background: var(--dq-surface);
+    color: var(--dq-text-muted);
+    border: 1px solid var(--dq-border);
+    border-radius: 4px;
+    padding: 0.25em 0.7em;
+    font-family: inherit;
+    font-size: 0.8rem;
+    cursor: pointer;
+    /* Held constant so swapping in "Copied" does not shift the help button. */
+    min-width: 5.5rem;
+  }
+  .copy-btn:hover {
+    border-color: var(--dq-accent);
+    color: var(--dq-accent);
+  }
+
+  .help-btn {
     width: 1.6rem;
     height: 1.6rem;
     border-radius: 50%;
