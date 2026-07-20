@@ -22,11 +22,11 @@ npm
 - `npm run lint:fix` — lint and auto-fix
 - `npm run format` — format all files with Prettier
 - `npm run format:check` — check formatting without writing
-- `npx vitest` — run tests
+- `npm run test` — run tests with Vitest
 
 ## Testing
 
-Use Vitest for all tests.
+Use Vitest for all tests. A test sits next to the module it covers, as `<module>.test.ts`.
 
 ## Linting & formatting
 
@@ -37,7 +37,7 @@ Use ESLint and Prettier. After making changes to any source files, run `npm run 
 
 ## Git
 
-Do not commit, push, or create branches. The user handles all git operations.
+Follow the `lsst-commits` skill: commit structure, message format, and the approval gate before any commit or history rewrite.
 
 ## Notes
 
