@@ -7,8 +7,10 @@
 
   let {
     values,
+    units = '',
   }: {
     values: Record<number, number>;
+    units?: string;
   } = $props();
 
   let container: HTMLDivElement;
@@ -436,6 +438,7 @@
       bind:scaleType
       bind:contrast
       bind:bias
+      label={units}
       onRangeChange={handleRangeChange}
     />
   {/if}
@@ -478,7 +481,9 @@
       <div class="dq-tooltip" style="left: {tooltip.x + 12}px; top: {tooltip.y + 12}px">
         <div class="tooltip-row"><span class="tooltip-key">Tract</span>{tooltip.tractId}</div>
         <div class="tooltip-row">
-          <span class="tooltip-key">Value</span>{formatValue(tooltip.value)}
+          <span class="tooltip-key">Value</span>{formatValue(tooltip.value)}{units
+            ? ` ${units}`
+            : ''}
         </div>
       </div>
     {/if}

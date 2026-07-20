@@ -7,6 +7,7 @@
   interface PlotEntry {
     template: string;
     parameters?: Record<string, (string | number)[]>;
+    units?: string;
     description?: string;
   }
 
@@ -50,6 +51,9 @@
     const bandSet = new Set(bandParam.map(String));
     return BAND_ORDER.filter((b) => bandSet.has(b));
   });
+  // Empty for a dimensionless metric, which every consumer renders as no unit at all
+  // rather than as a bare pair of parentheses.
+  let units = $derived(currentEntry?.units ?? '');
   let otherParams = $derived.by<[string, (string | number)[]][]>(() => {
     const params = currentEntry?.parameters;
     if (!params) return [];
@@ -188,9 +192,9 @@
       </button>
     </div>
     {#if projectionMode === 'flat'}
-      <HeatmapTractSelector values={heatmapValues} />
+      <HeatmapTractSelector values={heatmapValues} {units} />
     {:else}
-      <SphereTractSelector values={heatmapValues} />
+      <SphereTractSelector values={heatmapValues} {units} />
     {/if}
   </section>
 
@@ -250,7 +254,9 @@
 
       {#if currentEntry?.description}
         <section class="description">
-          <h3>{selectedPlot}</h3>
+          <h3>
+            {selectedPlot}{#if units}<span class="units">({units})</span>{/if}
+          </h3>
           <p>{currentEntry.description}</p>
         </section>
       {/if}
@@ -359,6 +365,11 @@
     font-size: 0.9rem;
     color: var(--dq-text);
     margin: 0 0 0.25rem;
+  }
+  .description h3 .units {
+    color: var(--dq-text-muted);
+    font-weight: normal;
+    margin-left: 0.4em;
   }
   .description p {
     font-size: 0.8rem;

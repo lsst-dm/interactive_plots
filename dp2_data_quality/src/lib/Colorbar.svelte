@@ -198,6 +198,7 @@
     {max}
     {dataMin}
     {dataMax}
+    units={label}
     onApply={handleModalApply}
     onClose={() => {
       showModal = false;

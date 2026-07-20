@@ -9,6 +9,7 @@
     max,
     dataMin,
     dataMax,
+    units = '',
     onApply,
     onClose,
   }: {
@@ -18,6 +19,7 @@
     max: number;
     dataMin: number;
     dataMax: number;
+    units?: string;
     onApply: (cfg: {
       colormap: string;
       scaleType: 'linear' | 'log' | 'sqrt';
@@ -125,7 +127,9 @@
     </div>
 
     <div class="section range-section">
-      <span class="field-label">Range</span>
+      <span class="field-label"
+        >Range{#if units}<span class="field-units">({units})</span>{/if}</span
+      >
       <div class="range-inputs">
         <label class="range-label">
           Min
@@ -187,6 +191,10 @@
     font-size: 0.8rem;
     color: var(--dq-text-muted);
     margin-bottom: 0.4rem;
+  }
+
+  .field-units {
+    margin-left: 0.4em;
   }
 
   .colormap-grid {
