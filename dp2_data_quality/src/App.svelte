@@ -2,10 +2,13 @@
   import { onMount, untrack } from 'svelte';
   import HeatmapTractSelector from './lib/HeatmapTractSelector.svelte';
   import SphereTractSelector from './lib/SphereTractSelector.svelte';
+  import HelpModal from './lib/HelpModal.svelte';
+  import { readPlotUrl, writePlotUrl } from './lib/plotUrl';
 
   interface PlotEntry {
     template: string;
     parameters?: Record<string, (string | number)[]>;
+    units?: string;
     description?: string;
   }
 
@@ -16,13 +19,25 @@
   const BAND_ORDER = ['u', 'g', 'r', 'i', 'z', 'y'];
   const DEFAULT_BAND = 'r';
 
+  // Resolved against this module's own URL rather than the site root: the
+  // bundle and its data ship together into a directory whose prefix differs
+  // between dp2.lsst.io, a /v/<branch>/ preview, and the dev server.
+  const DATA_URL = new URL('./data/', import.meta.url);
+
+  // Seeded before the first fetch, so a linked view resolves on the initial
+  // render and the map is drawn once rather than redrawn onto the link's target.
+  const linked = readPlotUrl(window.location.search);
+  const { band: linkedBand = '', ...linkedParams } = linked.params;
+
   let info = $state<Info | null>(null);
-  let selectedCategory = $state('');
-  let selectedPlot = $state('');
-  let selectedBand = $state<string>('');
-  let paramSelections = $state<Record<string, string | number>>({});
+  let selectedCategory = $state(linked.category);
+  let selectedPlot = $state(linked.plot);
+  let selectedBand = $state<string>(linkedBand);
+  let paramSelections = $state<Record<string, string | number>>(linkedParams);
   let heatmapValues = $state<Record<number, number>>({});
   let projectionMode = $state<'flat' | 'sphere'>('flat');
+  let showHelp = $state(false);
+  let copied = $state(false);
 
   let nonEmptyCategories = $derived(
     info
@@ -43,6 +58,9 @@
     const bandSet = new Set(bandParam.map(String));
     return BAND_ORDER.filter((b) => bandSet.has(b));
   });
+  // Empty for a dimensionless metric, which every consumer renders as no unit at all
+  // rather than as a bare pair of parentheses.
+  let units = $derived(currentEntry?.units ?? '');
   let otherParams = $derived.by<[string, (string | number)[]][]>(() => {
     const params = currentEntry?.parameters;
     if (!params) return [];
@@ -50,7 +68,7 @@
   });
 
   onMount(async () => {
-    const resp = await fetch('/data/info.json');
+    const resp = await fetch(new URL('info.json', DATA_URL));
     info = (await resp.json()) as Info;
   });
 
@@ -61,13 +79,18 @@
     if (cats.length === 0) return;
     if (!cats.includes(selectedCategory)) {
       untrack(() => {
-        selectedCategory = cats[0];
+        // A link may name only the plot, so fall back to whichever category holds it.
+        const owner = cats.find((c) => selectedPlot in info!.categories[c]);
+        selectedCategory = owner ?? cats[0];
       });
     }
   });
 
-  // When category changes, pick a plot default.
+  // When category changes, pick a plot default. Waits for info: until it loads
+  // there are no categories to draw plots from, and clearing the selection then
+  // would discard the plot a link asked for.
   $effect(() => {
+    if (!info) return;
     const plots = plotsInCategory;
     if (plots.length === 0) {
       untrack(() => {
@@ -99,8 +122,11 @@
 
       const next: Record<string, string | number> = {};
       for (const [key, values] of params) {
+        // Compared as strings: a value off the URL is text even where info.json
+        // declares the parameter numeric.
         const prev = paramSelections[key];
-        next[key] = values.includes(prev) ? prev : values[0];
+        const match = values.find((v) => String(v) === String(prev));
+        next[key] = match ?? values[0];
       }
       paramSelections = next;
     });
@@ -123,7 +149,7 @@
 
     const filename = entry.template.replace(/\{(\w+)\}/g, (_, k) => String(substitutions[k]));
     const seq = ++fetchSeq;
-    fetch(`/data/metrics/${filename}.json`).then(async (resp) => {
+    fetch(new URL(`metrics/${filename}.json`, DATA_URL)).then(async (resp) => {
       if (seq !== fetchSeq) return;
       if (!resp.ok) {
         heatmapValues = {};
@@ -138,6 +164,44 @@
     });
   });
 
+  // Mirror the selection into the query string. replaceState rather than
+  // pushState: changing plot is not navigation, and a history entry per change
+  // would leave the reader pressing Back through every view to leave the page.
+  $effect(() => {
+    if (!info || !selectedPlot) return;
+    const params: Record<string, string> = {};
+    if (selectedBand) params.band = selectedBand;
+    for (const [key, value] of Object.entries(paramSelections)) params[key] = String(value);
+    const query = writePlotUrl(window.location.search, {
+      category: selectedCategory,
+      plot: selectedPlot,
+      params,
+    });
+    history.replaceState(null, '', `${window.location.pathname}?${query}${window.location.hash}`);
+  });
+
+  let copyTimer: ReturnType<typeof setTimeout> | undefined;
+  async function copyLink() {
+    const url = window.location.href;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      // The clipboard API needs a secure context, which a file:// or plain http
+      // preview of the built bundle is not.
+      const field = document.createElement('textarea');
+      field.value = url;
+      field.style.position = 'fixed';
+      field.style.opacity = '0';
+      document.body.appendChild(field);
+      field.select();
+      document.execCommand('copy');
+      field.remove();
+    }
+    copied = true;
+    clearTimeout(copyTimer);
+    copyTimer = setTimeout(() => (copied = false), 1500);
+  }
+
   function onCategoryChange(e: Event) {
     selectedCategory = (e.target as HTMLSelectElement).value;
   }
@@ -151,12 +215,52 @@
   }
 </script>
 
-<header>
-  <h1>DP2 Data Quality</h1>
-</header>
-
 <main>
-  <aside class="sidebar">
+  <section class="map">
+    <div class="projection-toggle">
+      <button
+        type="button"
+        class="toggle-btn"
+        class:active={projectionMode === 'flat'}
+        onclick={() => (projectionMode = 'flat')}
+      >
+        Flat
+      </button>
+      <button
+        type="button"
+        class="toggle-btn"
+        class:active={projectionMode === 'sphere'}
+        onclick={() => (projectionMode = 'sphere')}
+      >
+        Sphere
+      </button>
+      <button
+        type="button"
+        class="copy-btn"
+        onclick={copyLink}
+        title="Copy a link to this plot"
+        aria-label="Copy a link to this plot"
+      >
+        {copied ? 'Copied' : 'Copy link'}
+      </button>
+      <button
+        type="button"
+        class="help-btn"
+        onclick={() => (showHelp = true)}
+        aria-label="How to use these plots"
+        title="How to use these plots"
+      >
+        ?
+      </button>
+    </div>
+    {#if projectionMode === 'flat'}
+      <HeatmapTractSelector values={heatmapValues} {units} />
+    {:else}
+      <SphereTractSelector values={heatmapValues} {units} />
+    {/if}
+  </section>
+
+  <aside class="controls">
     {#if info === null}
       <div class="loading">Loading…</div>
     {:else}
@@ -212,70 +316,44 @@
 
       {#if currentEntry?.description}
         <section class="description">
-          <h3>{selectedPlot}</h3>
+          <h3>
+            {selectedPlot}{#if units}<span class="units">({units})</span>{/if}
+          </h3>
           <p>{currentEntry.description}</p>
         </section>
       {/if}
     {/if}
   </aside>
-
-  <section class="map">
-    <div class="projection-toggle">
-      <button
-        type="button"
-        class="toggle-btn"
-        class:active={projectionMode === 'flat'}
-        onclick={() => (projectionMode = 'flat')}
-      >
-        Flat
-      </button>
-      <button
-        type="button"
-        class="toggle-btn"
-        class:active={projectionMode === 'sphere'}
-        onclick={() => (projectionMode = 'sphere')}
-      >
-        Sphere
-      </button>
-    </div>
-    {#if projectionMode === 'flat'}
-      <HeatmapTractSelector values={heatmapValues} />
-    {:else}
-      <SphereTractSelector values={heatmapValues} />
-    {/if}
-  </section>
 </main>
 
+{#if showHelp}
+  <HelpModal {projectionMode} onClose={() => (showHelp = false)} />
+{/if}
+
 <style>
-  header {
-    padding: 0.75rem 1.5rem;
-    border-bottom: 1px solid #333;
-  }
-
-  h1 {
-    font-size: 1.4rem;
-    margin: 0;
-    color: #dde;
-  }
-
+  /* Fills the mount point, which is sized by app.css. The map is stacked above
+     the controls rather than beside them: the page's own navigation already
+     occupies the left of the viewport, so a second vertical rail would leave
+     the map with a narrow strip of what is already a narrow content column. */
   main {
     display: flex;
-    height: calc(100vh - 3.5rem);
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
   }
 
-  .sidebar {
-    width: 240px;
-    min-width: 200px;
-    padding: 1rem;
-    border-right: 1px solid #333;
-    overflow-y: auto;
+  .controls {
     display: flex;
-    flex-direction: column;
-    gap: 1rem;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 0.75rem 1.25rem;
+    padding: 0.75rem 0.25rem 0;
+    border-top: 1px solid var(--dq-border);
+    flex: none;
   }
 
   .loading {
-    color: #889;
+    color: var(--dq-text-muted);
     font-size: 0.85rem;
   }
 
@@ -284,16 +362,17 @@
     flex-direction: column;
     gap: 0.25rem;
     font-size: 0.85rem;
-    color: #aab;
+    color: var(--dq-text-muted);
     margin: 0;
     padding: 0;
     border: none;
+    min-width: 9rem;
   }
 
   select {
-    background: #1a1a2e;
-    color: #ccc;
-    border: 1px solid #4a9eff;
+    background: var(--dq-surface);
+    color: var(--dq-text);
+    border: 1px solid var(--dq-accent);
     border-radius: 4px;
     padding: 0.4em 0.6em;
     font-family: inherit;
@@ -302,13 +381,13 @@
   }
 
   select:focus {
-    outline: 2px solid #4a9eff;
+    outline: 2px solid var(--dq-accent);
     outline-offset: 1px;
   }
 
   .band-field legend {
     font-size: 0.85rem;
-    color: #aab;
+    color: var(--dq-text-muted);
     padding: 0;
   }
 
@@ -319,9 +398,9 @@
   }
 
   .band-btn {
-    background: #1a1a2e;
-    color: #ccc;
-    border: 1px solid #333;
+    background: var(--dq-surface);
+    color: var(--dq-text);
+    border: 1px solid var(--dq-border);
     border-radius: 4px;
     padding: 0.25em 0.6em;
     font-family: inherit;
@@ -330,32 +409,40 @@
     min-width: 2em;
   }
   .band-btn:hover {
-    border-color: #4a9eff;
+    border-color: var(--dq-accent);
   }
   .band-btn.active {
-    background: #4a9eff;
-    color: #0b1220;
-    border-color: #4a9eff;
+    background: var(--dq-accent);
+    color: var(--dq-on-accent);
+    border-color: var(--dq-accent);
   }
 
+  /* Takes the remaining width of the control row so long descriptions wrap
+     alongside the selectors rather than pushing them apart. */
   .description {
-    padding-top: 0.5rem;
-    border-top: 1px solid #333;
+    flex: 1 1 18rem;
+    min-width: 14rem;
   }
   .description h3 {
     font-size: 0.9rem;
-    color: #dde;
-    margin: 0 0 0.5rem;
+    color: var(--dq-text);
+    margin: 0 0 0.25rem;
+  }
+  .description h3 .units {
+    color: var(--dq-text-muted);
+    font-weight: normal;
+    margin-left: 0.4em;
   }
   .description p {
     font-size: 0.8rem;
-    color: #aab;
+    color: var(--dq-text-muted);
     line-height: 1.5;
     margin: 0;
   }
 
   .map {
     flex: 1;
+    min-height: 0;
     min-width: 0;
     position: relative;
     display: flex;
@@ -364,13 +451,50 @@
 
   .projection-toggle {
     display: flex;
+    align-items: center;
     gap: 0.3rem;
-    padding: 0.5rem 0.75rem 0;
+    padding: 0 0 0.25rem;
+  }
+
+  /* Right-aligned, away from Flat/Sphere: neither is a third view. */
+  .copy-btn {
+    margin-left: auto;
+    background: var(--dq-surface);
+    color: var(--dq-text-muted);
+    border: 1px solid var(--dq-border);
+    border-radius: 4px;
+    padding: 0.25em 0.7em;
+    font-family: inherit;
+    font-size: 0.8rem;
+    cursor: pointer;
+    /* Held constant so swapping in "Copied" does not shift the help button. */
+    min-width: 5.5rem;
+  }
+  .copy-btn:hover {
+    border-color: var(--dq-accent);
+    color: var(--dq-accent);
+  }
+
+  .help-btn {
+    width: 1.6rem;
+    height: 1.6rem;
+    border-radius: 50%;
+    background: var(--dq-surface);
+    color: var(--dq-text-muted);
+    border: 1px solid var(--dq-border);
+    font-family: inherit;
+    font-size: 0.8rem;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .help-btn:hover {
+    border-color: var(--dq-accent);
+    color: var(--dq-accent);
   }
   .toggle-btn {
-    background: #1a1a2e;
-    color: #ccc;
-    border: 1px solid #333;
+    background: var(--dq-surface);
+    color: var(--dq-text);
+    border: 1px solid var(--dq-border);
     border-radius: 4px;
     padding: 0.25em 0.7em;
     font-family: inherit;
@@ -378,26 +502,21 @@
     cursor: pointer;
   }
   .toggle-btn:hover {
-    border-color: #4a9eff;
+    border-color: var(--dq-accent);
   }
   .toggle-btn.active {
-    background: #4a9eff;
-    color: #0b1220;
-    border-color: #4a9eff;
+    background: var(--dq-accent);
+    color: var(--dq-on-accent);
+    border-color: var(--dq-accent);
   }
 
   @media (max-width: 700px) {
-    main {
-      flex-direction: column;
-      height: auto;
+    .controls {
+      gap: 0.75rem;
     }
-    .sidebar {
-      width: auto;
-      border-right: none;
-      border-bottom: 1px solid #333;
-    }
-    .map {
-      min-height: 60vh;
+    .field,
+    .description {
+      min-width: 100%;
     }
   }
 </style>

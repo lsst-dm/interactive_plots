@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import * as d3 from 'd3';
   import { LSST_SKY_MAP } from './ringsSkyMap';
   import Colorbar from './Colorbar.svelte';
@@ -7,8 +7,10 @@
 
   let {
     values,
+    units = '',
   }: {
     values: Record<number, number>;
+    units?: string;
   } = $props();
 
   let container: HTMLDivElement;
@@ -17,6 +19,15 @@
   let projectionRef: d3.GeoProjection | null = null;
   let baseScale = 1;
   let zoomK = 1;
+
+  // Tract label size as a fraction of the projected sphere radius, so a label keeps
+  // its proportion to a tract at any container size.
+  //
+  // Sized against the flat selector's labels on screen rather than in proportion to
+  // a tract. The orthographic globe fills the pane with half the sky (~5 px/degree)
+  // while the flat projection fits all of it (~1.9 px/degree), so a label taking the
+  // same share of a tract in both views still renders far larger here.
+  const LABEL_SCALE = 1 / 300;
   const minZoom = 0.5;
   const maxZoom = 40;
   let ready = $state(false);
@@ -90,7 +101,7 @@
     const [lon, lat] = inv;
     if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
     if (!isVisible(lon, lat)) return null;
-    const ra = (((-lon) % 360) + 360) % 360;
+    const ra = ((-lon % 360) + 360) % 360;
     return { ra, dec: lat };
   }
 
@@ -135,60 +146,81 @@
     return [raToLon(ra), dec];
   });
 
+  // Keyed by tract id so a plot change reuses the nodes it already has. Rebuilding
+  // them costs more than the DOM work alone: this app is embedded in a page whose
+  // theme holds a MutationObserver over the article with {childList: true, subtree:
+  // true}, so every node added or removed here is a mutation record it has to queue
+  // and process. Recolouring in place touches attributes only, which that observer
+  // does not watch, so a bias/contrast drag or a colormap change costs it nothing.
+  type TractFeature = d3.GeoPermissibleObjects & {
+    properties: { id: number; ra: number; dec: number };
+  };
+
+  function tractFeature(id: number): TractFeature {
+    const tract = LSST_SKY_MAP.getTractInfo(id);
+    const coords: [number, number][] = tract.inner.map(([ra, dec]) => [raToLon(ra), dec]);
+    if (coords.length > 0) coords.push(coords[0]);
+    return {
+      type: 'Feature',
+      geometry: { type: 'Polygon', coordinates: [coords] },
+      properties: { id: tract.tract_id, ra: tract.ra, dec: tract.dec },
+    } as TractFeature;
+  }
+
+  // Fill only. Cheap enough to call on every frame of a colorbar drag.
+  function paintTracts() {
+    gRef!
+      .selectAll<SVGPathElement, TractFeature>('.tract')
+      .style('fill', (d) => tractFill(d.properties.id));
+  }
+
   function drawTracts() {
     const g = gRef!;
     const path = pathRef!;
 
-    g.selectAll('.tract').remove();
-    g.selectAll('.tract-label').remove();
     g.selectAll('.galactic-plane-overlay').remove();
 
-    tractIds.forEach((id) => {
-      const tract = LSST_SKY_MAP.getTractInfo(id);
-      const coords: [number, number][] = tract.inner.map(([ra, dec]) => [raToLon(ra), dec]);
-      if (coords.length > 0) coords.push(coords[0]);
+    const features = tractIds.map(tractFeature);
+    const key = (d: TractFeature) => String(d.properties.id);
 
-      const geoPolygon: d3.GeoPermissibleObjects = {
-        type: 'Feature',
-        geometry: { type: 'Polygon', coordinates: [coords] },
-        properties: { id: tract.tract_id },
-      };
+    const tracts = g.selectAll<SVGPathElement, TractFeature>('.tract').data(features, key);
+    tracts.exit().remove();
+    tracts
+      .enter()
+      .append('path')
+      .attr('class', 'tract')
+      .attr('data-id', (d) => d.properties.id)
+      .attr('data-ra', (d) => d.properties.ra)
+      .attr('data-dec', (d) => d.properties.dec)
+      .on('mouseenter', function () {
+        d3.select(this).attr('fill-opacity', 0.75);
+      })
+      .on('mousemove', function (event: MouseEvent, d) {
+        const rect = container.getBoundingClientRect();
+        tooltip = {
+          x: event.clientX - rect.left,
+          y: event.clientY - rect.top,
+          tractId: d.properties.id,
+          value: values[d.properties.id],
+        };
+      })
+      .on('mouseleave', function () {
+        d3.select(this).attr('fill-opacity', 1.0);
+        tooltip = null;
+      })
+      .merge(tracts)
+      .attr('d', path);
 
-      const tractPath = g
-        .append('path')
-        .datum(geoPolygon)
-        .attr('d', path)
-        .attr('class', 'tract')
-        .attr('data-id', tract.tract_id)
-        .attr('data-ra', tract.ra)
-        .attr('data-dec', tract.dec);
-
-      tractPath.style('fill', tractFill(tract.tract_id));
-      tractPath
-        .on('mouseenter', function () {
-          d3.select(this).attr('fill-opacity', 0.75);
-        })
-        .on('mousemove', function (event: MouseEvent) {
-          const rect = container.getBoundingClientRect();
-          tooltip = {
-            x: event.clientX - rect.left,
-            y: event.clientY - rect.top,
-            tractId: tract.tract_id,
-            value: values[tract.tract_id],
-          };
-        })
-        .on('mouseleave', function () {
-          d3.select(this).attr('fill-opacity', 1.0);
-          tooltip = null;
-        });
-
-      // Always create the label — redraw() positions and culls it based on current rotation.
-      g.append('text')
-        .attr('class', 'tract-label')
-        .attr('data-ra', tract.ra)
-        .attr('data-dec', tract.dec)
-        .text(tract.tract_id);
-    });
+    // redraw() positions and culls these by rotation; only membership changes here.
+    const labels = g.selectAll<SVGTextElement, TractFeature>('.tract-label').data(features, key);
+    labels.exit().remove();
+    labels
+      .enter()
+      .append('text')
+      .attr('class', 'tract-label')
+      .attr('data-ra', (d) => d.properties.ra)
+      .attr('data-dec', (d) => d.properties.dec)
+      .text((d) => d.properties.id);
 
     // Re-draw galactic plane on top of tracts
     const gpLineString = { type: 'LineString' as const, coordinates: galacticPlaneCoords };
@@ -218,9 +250,12 @@
       }
     });
 
-    // Tract labels scale with zoom so they stay proportional to the tract box — tiny when
-    // zoomed out, readable when zoomed in, matching the flat selector's transform behavior.
-    g.selectAll('.tract-label').style('font-size', `${2 * zoomK}px`);
+    // Tract labels are a fixed fraction of the sphere's projected radius, so they stay
+    // proportional to the tract box at any container size: tiny when zoomed out, readable
+    // when zoomed in, matching the flat selector's transform behavior. Scaling by zoom
+    // alone holds only while the container never changes size; the sphere shrinks with the
+    // pane but such a label would not, and would swallow the tract it names.
+    g.selectAll('.tract-label').style('font-size', `${baseScale * zoomK * LABEL_SCALE}px`);
 
     const r = projection.rotate();
     centerInfo = { ra: ((-r[0] % 360) + 360) % 360, dec: -r[1] };
@@ -252,8 +287,6 @@
       .datum({ type: 'Sphere' } as d3.GeoPermissibleObjects)
       .attr('d', path)
       .attr('class', 'sphere-outline')
-      .attr('fill', '#0d1426')
-      .attr('stroke', '#667')
       .attr('stroke-width', 1.2);
 
     // Graticule
@@ -263,7 +296,6 @@
       .attr('d', path)
       .attr('class', 'graticule')
       .attr('fill', 'none')
-      .attr('stroke', '#445')
       .attr('stroke-width', 0.5);
 
     // Galactic plane
@@ -343,11 +375,42 @@
     return () => ro.disconnect();
   });
 
+  // Metrics differ by orders of magnitude between plots, so a range, scale, or bias
+  // chosen for one is meaningless against the next and can map the whole sky to a
+  // single colour. Reset to the new data's own bounds on a linear scale whenever the
+  // values change. The colormap survives: the scheme is the reader's preference, the
+  // range is a property of the data.
+  //
+  // Declared before the effects below so it runs first, and they see the reset values.
   $effect(() => {
+    values;
+    untrack(() => {
+      userMin = undefined;
+      userMax = undefined;
+      scaleType = 'linear';
+      contrast = 1;
+      bias = 0.5;
+    });
+  });
+
+  // Structure: only when the set of tracts changes. Reads tractIds and nothing
+  // colour-related, so a colormap or contrast change cannot land here.
+  $effect(() => {
+    tractIds;
     if (ready && gRef && pathRef) {
-      drawTracts();
-      redraw();
+      untrack(() => {
+        drawTracts();
+        redraw();
+        paintTracts();
+      });
     }
+  });
+
+  // Colour: every colormap, range, contrast, and bias change comes through here and
+  // touches nothing but the fill.
+  $effect(() => {
+    colorScale;
+    if (ready && gRef) untrack(() => paintTracts());
   });
 
   function handleRangeChange(newMin: number, newMax: number) {
@@ -375,6 +438,7 @@
       bind:scaleType
       bind:contrast
       bind:bias
+      label={units}
       onRangeChange={handleRangeChange}
     />
   {/if}
@@ -382,7 +446,8 @@
     <div class="center-readout">
       <span class="readout-key">RA</span><span class="cursor-val">{formatRA(centerInfo.ra)}</span>
       <span class="readout-sep">·</span>
-      <span class="readout-key">Dec</span><span class="cursor-val">{formatDec(centerInfo.dec)}</span>
+      <span class="readout-key">Dec</span><span class="cursor-val">{formatDec(centerInfo.dec)}</span
+      >
     </div>
     <div class="cursor-readout">
       <div class="cursor-row">
@@ -413,10 +478,12 @@
       </div>
     </div>
     {#if tooltip}
-      <div class="tooltip" style="left: {tooltip.x + 12}px; top: {tooltip.y + 12}px">
+      <div class="dq-tooltip" style="left: {tooltip.x + 12}px; top: {tooltip.y + 12}px">
         <div class="tooltip-row"><span class="tooltip-key">Tract</span>{tooltip.tractId}</div>
         <div class="tooltip-row">
-          <span class="tooltip-key">Value</span>{formatValue(tooltip.value)}
+          <span class="tooltip-key">Value</span>{formatValue(tooltip.value)}{units
+            ? ` ${units}`
+            : ''}
         </div>
       </div>
     {/if}
@@ -447,6 +514,9 @@
     cursor: grabbing;
   }
 
+  /* Tract fill and label are set against the colormap, not the page, so they
+     stay fixed: a tract with no value reads the same in either theme, and the
+     label has to survive whatever colour the scale puts under it. */
   .tract-map :global(.tract) {
     fill: rgba(30, 80, 180, 0.35);
     stroke: #2060c0;
@@ -454,9 +524,11 @@
     transition: fill-opacity 0.1s;
   }
 
+  /* Dark, matching the flat selector: a label sits on a colormap-filled tract, and
+     the bright end of most colormaps (yellow, white) leaves light text unreadable.
+     font-size is set in redraw(), which scales it with the projection. */
   .tract-map :global(.tract-label) {
-    fill: #cce;
-    font-size: 8px;
+    fill: #335;
     text-anchor: middle;
     dominant-baseline: central;
     pointer-events: none;
@@ -465,15 +537,24 @@
   .tract-map :global(.galactic-plane),
   .tract-map :global(.galactic-plane-overlay) {
     fill: none;
-    stroke: #cc3333;
+    stroke: var(--dq-galactic-plane);
     stroke-width: 1.2;
     stroke-dasharray: 4, 3;
     opacity: 0.8;
     pointer-events: none;
   }
 
+  .tract-map :global(.sphere-outline) {
+    fill: var(--dq-map-bg);
+    stroke: var(--dq-border);
+  }
+  .tract-map :global(.graticule) {
+    fill: none;
+    stroke: var(--dq-border);
+  }
+
   .tract-map :global(.axis-label) {
-    fill: #aab;
+    fill: var(--dq-text-muted);
     font-size: 11px;
     pointer-events: none;
     user-select: none;
@@ -482,29 +563,29 @@
     font-weight: 500;
   }
   .tract-map :global(.dec-label) {
-    fill: #99a;
+    fill: var(--dq-text-muted);
   }
 
   .center-readout {
     position: absolute;
     top: 0.5rem;
     left: 0.75rem;
-    background: rgba(12, 16, 28, 0.75);
-    border: 1px solid #334;
+    background: var(--dq-panel);
+    border: 1px solid var(--dq-border);
     border-radius: 4px;
     padding: 0.3em 0.6em;
     font-size: 0.78rem;
-    color: #cce;
+    color: var(--dq-text);
     pointer-events: none;
     z-index: 5;
     font-variant-numeric: tabular-nums;
   }
   .readout-key {
-    color: #889;
+    color: var(--dq-text-muted);
     margin-right: 0.3em;
   }
   .readout-sep {
-    color: #556;
+    color: var(--dq-text-muted);
     margin: 0 0.4em;
   }
 
@@ -512,12 +593,12 @@
     position: absolute;
     top: 0.5rem;
     right: 0.75rem;
-    background: rgba(12, 16, 28, 0.75);
-    border: 1px solid #334;
+    background: var(--dq-panel);
+    border: 1px solid var(--dq-border);
     border-radius: 4px;
     padding: 0.3em 0.6em;
     font-size: 0.78rem;
-    color: #cce;
+    color: var(--dq-text);
     pointer-events: none;
     z-index: 5;
     font-variant-numeric: tabular-nums;
@@ -538,9 +619,9 @@
     pointer-events: auto;
   }
   .format-btn {
-    background: #1a1a2e;
-    color: #aab;
-    border: 1px solid #334;
+    background: var(--dq-surface);
+    color: var(--dq-text-muted);
+    border: 1px solid var(--dq-border);
     border-radius: 3px;
     padding: 0.1em 0.4em;
     font-family: inherit;
@@ -549,23 +630,23 @@
     flex: 1;
   }
   .format-btn:hover {
-    border-color: #4a9eff;
+    border-color: var(--dq-accent);
   }
   .format-btn.active {
-    background: #4a9eff;
-    color: #0b1220;
-    border-color: #4a9eff;
+    background: var(--dq-accent);
+    color: var(--dq-on-accent);
+    border-color: var(--dq-accent);
   }
 
-  .tooltip {
+  .dq-tooltip {
     position: absolute;
     pointer-events: none;
-    background: rgba(12, 16, 28, 0.92);
-    border: 1px solid #4a9eff;
+    background: var(--dq-panel);
+    border: 1px solid var(--dq-accent);
     border-radius: 4px;
     padding: 0.35em 0.6em;
     font-size: 0.8rem;
-    color: #dde;
+    color: var(--dq-text);
     white-space: nowrap;
     z-index: 10;
   }
@@ -575,7 +656,7 @@
     align-items: baseline;
   }
   .tooltip-key {
-    color: #889;
+    color: var(--dq-text-muted);
     font-size: 0.72rem;
     min-width: 3em;
   }
